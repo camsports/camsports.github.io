@@ -1,0 +1,78 @@
+name: Publish CAM Sports
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cam-sports-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Read the current CAM Sports source
+        uses: actions/checkout@v6
+        with:
+          repository: eduardcarrera00-pixel/RCM-Sports
+          ref: main
+          path: source
+          persist-credentials: false
+
+      - name: Check whether a publication is needed
+        id: revision
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          source_sha="$(git -C source rev-parse HEAD)"
+          deployed_sha="$(curl --fail --silent --show-error --max-time 15 https://camsports.github.io/source-revision.txt 2>/dev/null || true)"
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT_NAME" == "schedule" && "$source_sha" == "$deployed_sha" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure GitHub Pages
+        if: steps.revision.outputs.changed == 'true'
+        uses: actions/configure-pages@v5
+
+      - name: Prepare the website
+        if: steps.revision.outputs.changed == 'true'
+        env:
+          SOURCE_SHA: ${{ steps.revision.outputs.sha }}
+        run: |
+          mkdir -p _site
+          git -C source archive HEAD | tar -x -C _site
+          rm -rf _site/.github
+          printf '%s\n' "$SOURCE_SHA" > _site/source-revision.txt
+          touch _site/.nojekyll
+          test -s _site/index.html
+          test -s _site/assets/site.css
+          test -s _site/assets/ae-editorial-bundle.css
+
+      - name: Upload the website
+        if: steps.revision.outputs.changed == 'true'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+      - name: Publish the branded address
+        if: steps.revision.outputs.changed == 'true'
+        id: deployment
+        uses: actions/deploy-pages@v4
